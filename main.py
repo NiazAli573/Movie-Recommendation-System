@@ -22,10 +22,20 @@ TMDB_API_BASE = "https://api.themoviedb.org/3"
 
 app = FastAPI()
 
-# Configure CORS
+# Configure CORS - Allow both local development and production domains
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    os.getenv("FRONTEND_URL", "").strip(),  # For Vercel deployment
+]
+# Remove empty strings from origins
+allowed_origins = [origin for origin in allowed_origins if origin]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
