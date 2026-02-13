@@ -1,0 +1,11 @@
+*.py
+requirements.txt
+*.csv
+Procfile
+runtime.txt
+__pycache__
+.python-version
+.env
+.env.example
+venv/
+env/
