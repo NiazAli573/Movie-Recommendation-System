@@ -29,7 +29,8 @@ allowed_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
-    os.getenv("FRONTEND_URL", "").strip(),  # For Vercel deployment
+    "https://cinemax-nine-pearl.vercel.app",  # Vercel production domain
+    os.getenv("FRONTEND_URL", "").strip(),  # For additional deployment URLs
 ]
 # Remove empty strings from origins
 allowed_origins = [origin for origin in allowed_origins if origin]
