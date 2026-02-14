@@ -226,8 +226,8 @@ def load_and_process_data():
     movies_data['genres_list'] = movies_data['genres'].apply(parse_genres_readable)
     movies_data = movies_data.drop('genres', axis=1)
     
-    # Create similarity matrix
-    cv = CountVectorizer(max_features=5000, stop_words='english')
+    # Create similarity matrix with reduced features for memory optimization on free tier
+    cv = CountVectorizer(max_features=2000, stop_words='english')
     vectors = cv.fit_transform(movies_data['tags']).toarray()
     similarity_matrix = cosine_similarity(vectors)
     
