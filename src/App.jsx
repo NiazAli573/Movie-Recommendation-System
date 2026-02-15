@@ -1,13 +1,22 @@
 import React, { useRef, useState } from 'react';
 import MovieSearch from './components/MovieSearch';
+import LegalPages from './components/LegalPages';
 
 function App() {
   const searchRef = useRef(null);
   const [activeSection, setActiveSection] = useState('home');
+  const [legalPage, setLegalPage] = useState(null);
 
   const goHome = () => {
     setActiveSection('home');
+    setLegalPage(null);
     searchRef.current?.resetToHome();
+  };
+
+  const showLegalPage = (page) => {
+    setLegalPage(page);
+    setActiveSection('legal');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const navItems = [
@@ -19,6 +28,7 @@ function App() {
 
   const handleNav = (id) => {
     setActiveSection(id);
+    setLegalPage(null);
     if (id === 'home') {
       searchRef.current?.resetToHome();
     } else if (id === 'discover') {
@@ -74,7 +84,11 @@ function App() {
 
       {/* ── Main Content ── */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 pt-24 pb-20">
-        <MovieSearch ref={searchRef} activeSection={activeSection} onSectionChange={setActiveSection} />
+        {legalPage ? (
+          <LegalPages page={legalPage} />
+        ) : (
+          <MovieSearch ref={searchRef} activeSection={activeSection} onSectionChange={setActiveSection} />
+        )}
       </main>
 
       {/* ── Footer ── */}
@@ -115,10 +129,38 @@ function App() {
             <div>
               <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Legal</h4>
               <ul className="space-y-2">
-                <li><a href="#" className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300">Privacy Policy</a></li>
-                <li><a href="#" className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300">Terms of Service</a></li>
-                <li><a href="#" className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300">About</a></li>
-                <li><a href="#" className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300">Contact</a></li>
+                <li>
+                  <button 
+                    onClick={() => showLegalPage('privacy')} 
+                    className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300"
+                  >
+                    Privacy Policy
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => showLegalPage('terms')} 
+                    className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300"
+                  >
+                    Terms of Service
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => showLegalPage('about')} 
+                    className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300"
+                  >
+                    About
+                  </button>
+                </li>
+                <li>
+                  <button 
+                    onClick={() => showLegalPage('contact')} 
+                    className="text-sm text-gray-500 hover:text-amber-400 transition-colors duration-300"
+                  >
+                    Contact
+                  </button>
+                </li>
               </ul>
             </div>
           </div>

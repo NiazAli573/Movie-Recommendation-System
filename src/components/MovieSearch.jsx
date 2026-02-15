@@ -344,9 +344,9 @@ const HeroBanner = ({ movie, onSearch, onDetail }) => {
   if (!movie) return null;
 
   return (
-    <div className="relative rounded-xl overflow-hidden mb-8 group cursor-pointer" onClick={() => onDetail(movie.id)}>
+    <div className="relative rounded-xl overflow-hidden group cursor-pointer" onClick={() => onDetail(movie.id)}>
       {/* Background image */}
-      <div className="aspect-[3/1] max-h-[260px] overflow-hidden">
+      <div className="aspect-[2/1] sm:aspect-[2.5/1] overflow-hidden">
         {movie.poster_url ? (
           <img
             src={movie.poster_url}
@@ -372,7 +372,7 @@ const HeroBanner = ({ movie, onSearch, onDetail }) => {
           </span>
           <h2 className="text-xl sm:text-2xl lg:text-3xl font-medium text-white mb-1">{movie.title}</h2>
           {movie.overview && (
-            <p className="text-sm text-gray-300 line-clamp-1 mb-3">{movie.overview}</p>
+            <p className="text-sm text-gray-300 line-clamp-2 mb-3">{movie.overview}</p>
           )}
           <div className="flex items-center gap-3">
             <button
@@ -696,11 +696,20 @@ const MovieSearch = forwardRef(({ activeSection = 'home', onSectionChange }, ref
 
       {/* ── Hero Section (only on home when no results) ── */}
       {activeSection === 'home' && !showingResults && !error && !topLoading && topMovies.length > 0 && (
-        <HeroBanner
-          movie={topMovies[0]}
-          onSearch={triggerSearch}
-          onDetail={setSelectedMovieId}
-        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+          <HeroBanner
+            movie={topMovies[0]}
+            onSearch={triggerSearch}
+            onDetail={setSelectedMovieId}
+          />
+          {topMovies.length > 1 && (
+            <HeroBanner
+              movie={topMovies[1]}
+              onSearch={triggerSearch}
+              onDetail={setSelectedMovieId}
+            />
+          )}
+        </div>
       )}
 
       {/* ── Error ── */}
