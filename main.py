@@ -11,8 +11,10 @@ from pydantic import BaseModel, Field
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+from scipy.sparse import csr_matrix
 from fuzzywuzzy import fuzz, process
 from dotenv import load_dotenv
+import gc
 
 load_dotenv()
 
@@ -47,6 +49,8 @@ app.add_middleware(
 # Global variables to store processed data
 movies_data = None
 similarity_matrix = None
+raw_movies_cache = None  # Cache raw movies CSV to avoid reloading
+raw_credits_cache = None  # Cache credits CSV
 poster_cache = {}  # Cache poster URLs to avoid repeated API calls
 POSTER_CACHE_FILE = "poster_cache.json"
 
@@ -112,16 +116,30 @@ class MovieDetailResponse(BaseModel):
     status: str = ""
 
 def load_and_process_data():
-    """Load and process movie data"""
-    global movies_data, similarity_matrix
+    """Load and process movie data with memory optimizations"""
+    global movies_data, similarity_matrix, raw_movies_cache, raw_credits_cache
     
-    # Load datasets
-    movies = pd.read_csv('tmdb_5000_movies.csv')
+    # Load datasets with optimized dtypes
+    dtypes_movies = {
+        'budget': 'int32',
+        'revenue': 'int32',
+        'runtime': 'float32',
+        'vote_average': 'float32',
+        'vote_count': 'int32'
+    }
+    movies = pd.read_csv('tmdb_5000_movies.csv', dtype=dtypes_movies)
     credits = pd.read_csv('tmdb_5000_credits.csv')
     
+    # Cache raw data for later use (avoid reloading CSVs)
+    raw_movies_cache = movies[['id', 'vote_count', 'vote_average', 'release_date', 
+                                'genres', 'runtime', 'tagline', 'budget', 'revenue', 
+                                'status', 'spoken_languages', 'production_companies']].copy()
+    raw_credits_cache = credits[['movie_id', 'cast', 'crew']].copy()
+    
     # Merge datasets (drop duplicate title column from credits)
-    credits = credits.drop('title', axis=1)
-    movies = movies.merge(credits, left_on='id', right_on='movie_id', how='left')
+    credits_slim = credits[['movie_id', 'cast', 'crew']]
+    movies = movies.merge(credits_slim, left_on='id', right_on='movie_id', how='left')
+    del credits_slim  # Free memory
     
     # Select relevant columns
     movies = movies[['id', 'title', 'overview', 'genres', 'keywords', 'cast', 'crew']]
@@ -175,6 +193,7 @@ def load_and_process_data():
             return []
     
     movies['director'] = movies['crew'].apply(get_director)
+    del movies['crew']  # Free memory - no longer needed
     
     # Save original director name before processing
     movies['director_name'] = movies['director'].apply(lambda x: x[0] if len(x) > 0 else '')
@@ -200,18 +219,18 @@ def load_and_process_data():
     # Convert to lowercase
     movies['tags'] = movies['tags'].apply(lambda x: x.lower())
     
-    # Keep only required columns (include raw cast/crew for detail endpoint)
-    movies_data = movies[['id', 'title', 'overview', 'tags', 'director_name', 'cast_raw', 'crew_raw']].copy()
+    # Keep only required columns (NO raw cast/crew in memory)
+    movies_data = movies[['id', 'title', 'overview', 'tags', 'director_name']].copy()
+    del movies  # Free memory
     
-    # Restore original genres/vote/date from the raw movies dataframe (before processing)
-    raw_movies = pd.read_csv('tmdb_5000_movies.csv')
+    # Merge with cached raw data (already in memory)
     movies_data = movies_data.merge(
-        raw_movies[['id', 'vote_average', 'release_date', 'genres', 'runtime', 'tagline']],
+        raw_movies_cache[['id', 'vote_average', 'release_date', 'genres', 'runtime', 'tagline']],
         on='id', how='left'
     )
-    movies_data['vote_average'] = movies_data['vote_average'].fillna(0.0)
+    movies_data['vote_average'] = movies_data['vote_average'].fillna(0.0).astype('float32')
     movies_data['release_date'] = movies_data['release_date'].fillna('')
-    movies_data['runtime'] = movies_data['runtime'].fillna(0.0)
+    movies_data['runtime'] = movies_data['runtime'].fillna(0.0).astype('float32')
     movies_data['tagline'] = movies_data['tagline'].fillna('')
     
     # Parse genres into readable list
@@ -227,11 +246,22 @@ def load_and_process_data():
     movies_data['genres_list'] = movies_data['genres'].apply(parse_genres_readable)
     movies_data = movies_data.drop('genres', axis=1)
     
-    # Create similarity matrix with reduced features for memory optimization on free tier
-    cv = CountVectorizer(max_features=2000, stop_words='english')
-    vectors = cv.fit_transform(movies_data['tags']).toarray()
-    similarity_matrix = cosine_similarity(vectors)
+    # Memory optimization: Use smaller feature set and sparse matrices
+    cv = CountVectorizer(max_features=1200, stop_words='english')
+    vectors = cv.fit_transform(movies_data['tags'])  # Keep sparse
     
+    # Compute similarity in chunks to save memory, then convert to sparse
+    print("Computing similarity matrix...")
+    similarity_matrix = cosine_similarity(vectors, dense_output=False)  # Sparse output
+    
+    # Drop tags column - no longer needed
+    movies_data = movies_data.drop('tags', axis=1)
+    
+    # Force garbage collection
+    del vectors, cv
+    gc.collect()
+    
+    print(f"Similarity matrix shape: {similarity_matrix.shape}, format: {type(similarity_matrix)}")
     return movies_data, similarity_matrix
 
 @app.on_event("startup")
@@ -346,8 +376,8 @@ async def recommend_movies(request: MovieRequest):
     # Get the first match
     movie_idx = movie_matches.index[0]
     
-    # Get similarity scores
-    distances = similarity_matrix[movie_idx]
+    # Get similarity scores (handle sparse matrix)
+    distances = similarity_matrix[movie_idx].toarray().flatten() if hasattr(similarity_matrix[movie_idx], 'toarray') else similarity_matrix[movie_idx]
     
     # Get top 6 similar movies (including the movie itself)
     movie_indices = np.argsort(distances)[::-1][1:6]  # Skip the first one (itself)
@@ -384,9 +414,8 @@ async def get_top_movies():
     if movies_data is None:
         raise HTTPException(status_code=503, detail="Data not loaded yet")
 
-    # Read vote_count from raw CSV to filter out low-vote movies
-    raw = pd.read_csv('tmdb_5000_movies.csv')[['id', 'vote_count']]
-    merged = movies_data.merge(raw, on='id', how='left')
+    # Use cached raw data instead of reloading CSV
+    merged = movies_data.merge(raw_movies_cache[['id', 'vote_count']], on='id', how='left')
     qualified = merged[merged['vote_count'] >= 1000].nlargest(20, 'vote_average')
 
     # Fetch posters in parallel
@@ -423,15 +452,17 @@ async def get_movie_detail(movie_id: int):
 
     movie = movie_row.iloc[0]
 
-    # Parse cast — top 10 with character names
+    # Parse cast — top 10 with character names (load from cached credits)
     cast_list = []
     try:
-        raw_cast = ast.literal_eval(movie['cast_raw']) if isinstance(movie['cast_raw'], str) else []
-        for c in raw_cast[:10]:
-            cast_list.append(CastMember(
-                name=c.get('name', ''),
-                character=c.get('character', '')
-            ))
+        credits_row = raw_credits_cache[raw_credits_cache['movie_id'] == movie_id]
+        if not credits_row.empty:
+            raw_cast = ast.literal_eval(credits_row.iloc[0]['cast']) if isinstance(credits_row.iloc[0]['cast'], str) else []
+            for c in raw_cast[:10]:
+                cast_list.append(CastMember(
+                    name=c.get('name', ''),
+                    character=c.get('character', '')
+                ))
     except Exception:
         pass
 
@@ -440,20 +471,21 @@ async def get_movie_detail(movie_id: int):
     KEY_JOBS = {'Director', 'Writer', 'Screenplay', 'Producer', 'Executive Producer',
                 'Director of Photography', 'Original Music Composer', 'Editor'}
     try:
-        raw_crew = ast.literal_eval(movie['crew_raw']) if isinstance(movie['crew_raw'], str) else []
-        seen = set()
-        for c in raw_crew:
-            job = c.get('job', '')
-            name = c.get('name', '')
-            if job in KEY_JOBS and (name, job) not in seen:
-                crew_list.append(CrewMember(name=name, job=job))
-                seen.add((name, job))
+        credits_row = raw_credits_cache[raw_credits_cache['movie_id'] == movie_id]
+        if not credits_row.empty:
+            raw_crew = ast.literal_eval(credits_row.iloc[0]['crew']) if isinstance(credits_row.iloc[0]['crew'], str) else []
+            seen = set()
+            for c in raw_crew:
+                job = c.get('job', '')
+                name = c.get('name', '')
+                if job in KEY_JOBS and (name, job) not in seen:
+                    crew_list.append(CrewMember(name=name, job=job))
+                    seen.add((name, job))
     except Exception:
         pass
 
-    # Get extra fields from raw CSV
-    raw_movies = pd.read_csv('tmdb_5000_movies.csv')
-    raw_row = raw_movies[raw_movies['id'] == movie_id]
+    # Get extra fields from cached raw data
+    raw_row = raw_movies_cache[raw_movies_cache['id'] == movie_id]
     budget = revenue = vote_count = 0
     spoken_languages = []
     production_companies = []
@@ -531,9 +563,8 @@ async def get_movies_by_genre(genre: str = Query(..., min_length=1)):
     if filtered.empty:
         raise HTTPException(status_code=404, detail=f"No movies found for genre '{genre}'")
 
-    # Get vote counts & filter for quality, then sort
-    raw = pd.read_csv('tmdb_5000_movies.csv')[['id', 'vote_count']]
-    filtered = filtered.merge(raw, on='id', how='left')
+    # Get vote counts from cache instead of reloading CSV
+    filtered = filtered.merge(raw_movies_cache[['id', 'vote_count']], on='id', how='left')
     qualified = filtered[filtered['vote_count'] >= 100].nlargest(20, 'vote_average')
     if qualified.empty:
         qualified = filtered.nlargest(20, 'vote_average')
